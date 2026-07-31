@@ -539,6 +539,155 @@ elif page == "📈 EDA":
                 st.pyplot(fig, use_container_width=True)
             plt.close(fig)
 
+            # -------------------------------------------------------
+            # PLAIN-ENGLISH CORRELATION INSIGHTS
+            # Rule-based: scan the correlation matrix for pairs above
+            # a threshold and turn them into readable sentences.
+            # No LLM involved — purely programmatic logic.
+            # -------------------------------------------------------
+            st.markdown("##### 💬 Correlation Insights")
+
+            insight_threshold = 0.5
+            found_insight = False
+            already_reported = set()  # avoids reporting A-B and B-A twice
+
+            for col_a in corr_matrix.columns:
+                for col_b in corr_matrix.columns:
+                    if col_a == col_b:
+                        continue
+                    pair_key = frozenset([col_a, col_b])
+                    if pair_key in already_reported:
+                        continue
+
+                    corr_value = corr_matrix.loc[col_a, col_b]
+
+                    if abs(corr_value) >= insight_threshold:
+                        already_reported.add(pair_key)
+                        found_insight = True
+
+                        if corr_value > 0:
+                            direction = "increases"
+                            strength = "strong" if corr_value >= 0.7 else "moderate"
+                        else:
+                            direction = "decreases"
+                            strength = "strong" if corr_value <= -0.7 else "moderate"
+
+                        # Escape "$" so Streamlit's markdown renderer doesn't
+                        # interpret it as the start of LaTeX math notation
+                        # (a common issue with column names like "Income ($)").
+                        safe_col_a = col_a.replace("$", "\\$")
+                        safe_col_b = col_b.replace("$", "\\$")
+
+                        st.write(
+                            f"- There is a **{strength} {'positive' if corr_value > 0 else 'negative'} "
+                            f"correlation** ({corr_value:.2f}) between **{safe_col_a}** and **{safe_col_b}** — "
+                            f"as {safe_col_a} increases, {safe_col_b} typically **{direction}**."
+                        )
+
+            if not found_insight:
+                st.write("No strong correlations (|r| ≥ 0.5) were found between numeric columns.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # HISTOGRAMS — DISTRIBUTION ANALYSIS
+        # -----------------------------------------------------------
+        st.subheader("📊 Distribution Analysis (Histograms)")
+
+        if numeric_df.empty:
+            st.info("No numeric columns available for histograms.")
+        else:
+            selected_hist_col = st.selectbox(
+                "Select a column to view its distribution:",
+                options=numeric_df.columns.tolist(),
+                key="hist_col_selector",
+            )
+
+            fig, ax = plt.subplots(figsize=(5, 3))
+            sns.histplot(numeric_df[selected_hist_col].dropna(), kde=True, ax=ax, color="#4C72B0")
+            ax.set_title(f"Distribution of {selected_hist_col}", fontsize=9)
+            ax.tick_params(labelsize=7)
+
+            hist_col, _ = st.columns([1, 1])
+            with hist_col:
+                st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # BOXPLOTS — VISUAL OUTLIER CHECK
+        # -----------------------------------------------------------
+        st.subheader("📦 Boxplots (Outlier Visualization)")
+
+        if numeric_df.empty:
+            st.info("No numeric columns available for boxplots.")
+        else:
+            selected_box_col = st.selectbox(
+                "Select a column to view its boxplot:",
+                options=numeric_df.columns.tolist(),
+                key="box_col_selector",
+            )
+
+            fig, ax = plt.subplots(figsize=(5, 2.5))
+            sns.boxplot(x=numeric_df[selected_box_col].dropna(), ax=ax, color="#DD8452")
+            ax.set_title(f"Boxplot of {selected_box_col}", fontsize=9)
+            ax.tick_params(labelsize=7)
+
+            box_col, _ = st.columns([1, 1])
+            with box_col:
+                st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # CATEGORICAL ANALYSIS
+        # -----------------------------------------------------------
+        st.subheader("🗂️ Categorical Analysis")
+
+        if categorical_df.empty:
+            st.info("No categorical (text) columns available for analysis.")
+        else:
+            selected_cat_col = st.selectbox(
+                "Select a categorical column to view its value counts:",
+                options=categorical_df.columns.tolist(),
+                key="cat_col_selector",
+            )
+
+            value_counts = df[selected_cat_col].value_counts().head(15)  # top 15 to avoid overcrowding
+
+            fig, ax = plt.subplots(figsize=(5, 3))
+            sns.barplot(x=value_counts.values, y=value_counts.index, ax=ax, color="#55A868")
+            ax.set_title(f"Top values in {selected_cat_col}", fontsize=9)
+            ax.tick_params(labelsize=7)
+
+            cat_col, _ = st.columns([1, 1])
+            with cat_col:
+                st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # SKEWNESS & KURTOSIS
+        # -----------------------------------------------------------
+        st.subheader("📐 Skewness & Kurtosis")
+
+        if numeric_df.empty:
+            st.info("No numeric columns available.")
+        else:
+            skew_kurt_df = pd.DataFrame({
+                "Column": numeric_df.columns,
+                "Skewness": numeric_df.skew().round(2).values,
+                "Kurtosis": numeric_df.kurt().round(2).values,
+            })
+            st.dataframe(skew_kurt_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "Skewness: ~0 = symmetric, >0.5 = right-skewed, <-0.5 = left-skewed. "
+                "Kurtosis: ~0 = normal-like tails, >0 = heavier tails (more extreme outliers)."
+            )
+
 
 
 else:
