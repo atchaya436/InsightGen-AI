@@ -1,0 +1,34 @@
+# Virtual environment
+venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit cache
+.streamlit/
+
+# Environment variables (if we add secrets/config later)
+.env
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# VS Code settings (user-specific, not project-specific)
+.vscode/
+
+# User-uploaded / generated data (keep folder structure, ignore contents)
+data/uploads/*
+!data/uploads/.gitkeep
+data/cleaned_data/*
+!data/cleaned_data/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Logs
+*.log
