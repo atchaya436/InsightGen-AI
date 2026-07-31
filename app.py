@@ -688,7 +688,139 @@ elif page == "📈 EDA":
                 "Kurtosis: ~0 = normal-like tails, >0 = heavier tails (more extreme outliers)."
             )
 
+elif page == "📌 KPIs":
+    st.title("📌 Automatic KPI Generator")
 
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:
+        df = st.session_state.df
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        # -----------------------------------------------------------
+        # DATASET TYPE DETECTION
+        # Rule-based keyword scoring — no ML involved.
+        # We check how many keywords for each dataset type appear
+        # anywhere in the column names (case-insensitive substring match).
+        # -----------------------------------------------------------
+        columns_lower = " ".join(df.columns).lower()
+
+        type_keywords = {
+            "Retail": ["product", "price", "quantity", "sales", "revenue", "category", "order"],
+            "HR": ["employee", "salary", "department", "hire", "attrition", "performance", "tenure"],
+            "Finance": ["revenue", "expense", "profit", "budget", "cost", "transaction", "invoice"],
+            "Customer": ["customer", "spending", "income", "age", "gender", "genre", "membership"],
+        }
+
+        scores = {}
+        for dataset_type, keywords in type_keywords.items():
+            score = sum(1 for keyword in keywords if keyword in columns_lower)
+            scores[dataset_type] = score
+
+        best_type = max(scores, key=scores.get)
+        best_score = scores[best_type]
+
+        # Require at least 2 keyword matches before trusting a specific type;
+        # otherwise fall back to "Generic" rather than guessing wrong.
+        detected_type = best_type if best_score >= 2 else "Generic"
+
+        st.info(f"🔍 Detected dataset type: **{detected_type}** (keyword match score: {best_score})")
+
+        with st.expander("How was this detected?"):
+            score_df = pd.DataFrame({
+                "Dataset Type": scores.keys(),
+                "Keyword Matches": scores.values(),
+            }).sort_values("Keyword Matches", ascending=False)
+            st.dataframe(score_df, use_container_width=True, hide_index=True)
+            st.caption(
+                "Detection works by scanning column names for keywords typically "
+                "associated with each dataset type. The type with the most matches "
+                "wins, as long as it clears a minimum threshold of 2 matches."
+            )
+
+        st.markdown("---")
+        st.subheader(f"📊 {detected_type} KPIs")
+
+        # Helper: find the first column whose name contains any of the given
+        # keywords. Returns None if nothing matches. Used throughout to
+        # flexibly locate the "right" column regardless of exact naming.
+        def find_column(dataframe, keywords):
+            for col in dataframe.columns:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in keywords):
+                    return col
+            return None
+
+        if detected_type == "Customer":
+            customer_col = find_column(df, ["customer", "id"])
+            age_col = find_column(df, ["age"])
+            income_col = find_column(df, ["income"])
+            spending_col = find_column(df, ["spending"])
+            gender_col = find_column(df, ["gender", "genre"])
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Customers", f"{df.shape[0]:,}")
+            with col2:
+                if age_col:
+                    st.metric("Average Age", f"{df[age_col].mean():.1f} yrs")
+                else:
+                    st.metric("Average Age", "N/A")
+            with col3:
+                if income_col:
+                    st.metric("Average Income", f"{df[income_col].mean():.1f}")
+                else:
+                    st.metric("Average Income", "N/A")
+            with col4:
+                if spending_col:
+                    st.metric("Avg Spending Score", f"{df[spending_col].mean():.1f}")
+                else:
+                    st.metric("Avg Spending Score", "N/A")
+
+            if gender_col:
+                st.markdown("##### Gender Distribution")
+                st.bar_chart(df[gender_col].value_counts())
+
+        elif detected_type == "Retail":
+            price_col = find_column(df, ["price"])
+            quantity_col = find_column(df, ["quantity", "qty"])
+            revenue_col = find_column(df, ["revenue", "sales"])
+            category_col = find_column(df, ["category"]) or find_column(df, ["product"])
+
+            # If there's no explicit revenue column but we DO have price and
+            # quantity, we can calculate revenue ourselves.
+            calculated_revenue = None
+            if revenue_col:
+                calculated_revenue = df[revenue_col].sum()
+            elif price_col and quantity_col:
+                calculated_revenue = (df[price_col] * df[quantity_col]).sum()
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Orders", f"{df.shape[0]:,}")
+            with col2:
+                if calculated_revenue is not None:
+                    st.metric("Total Revenue", f"{calculated_revenue:,.2f}")
+                else:
+                    st.metric("Total Revenue", "N/A")
+            with col3:
+                if quantity_col:
+                    st.metric("Total Units Sold", f"{df[quantity_col].sum():,.0f}")
+                else:
+                    st.metric("Total Units Sold", "N/A")
+            with col4:
+                if calculated_revenue is not None and df.shape[0] > 0:
+                    st.metric("Avg Order Value", f"{calculated_revenue / df.shape[0]:,.2f}")
+                else:
+                    st.metric("Avg Order Value", "N/A")
+
+            if category_col:
+                st.markdown(f"##### Top {category_col} by Count")
+                st.bar_chart(df[category_col].value_counts().head(10))
 
 else:
     # Placeholder for all remaining not-yet-built pages
