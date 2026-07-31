@@ -53,9 +53,11 @@ st.sidebar.caption("Built with Python & Streamlit")
 # We initialize it once, only if it doesn't already exist.
 # -----------------------------------------------------------------------
 if "df" not in st.session_state:
-    st.session_state.df = None  # will hold the uploaded dataframe
+    st.session_state.df = None  # will hold the original uploaded dataframe
 if "filename" not in st.session_state:
     st.session_state.filename = None  # will hold the original file name
+if "cleaned_df" not in st.session_state:
+    st.session_state.cleaned_df = None  # will hold the cleaned dataframe
 
 # -----------------------------------------------------------------------
 # MAIN PAGE CONTENT
@@ -163,6 +165,116 @@ elif page == "📁 Upload Dataset":
 
     else:
         st.info("👆 Upload a file above to see the dataset preview and summary.")
+
+elif page == "🧹 Data Cleaning":
+    st.title("🧹 Data Cleaning")
+
+    if st.session_state.df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        # Start cleaning from the original df each time this page loads,
+        # unless we already have a cleaned version in progress.
+        if st.session_state.cleaned_df is None:
+            st.session_state.cleaned_df = st.session_state.df.copy()
+
+        df = st.session_state.cleaned_df
+
+        # -----------------------------------------------------------
+        # DUPLICATE DETECTION & REMOVAL
+        # -----------------------------------------------------------
+        st.subheader("🔁 Duplicate Rows")
+
+        duplicate_count = int(df.duplicated().sum())
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            if duplicate_count > 0:
+                st.warning(f"Found **{duplicate_count}** duplicate row(s).")
+            else:
+                st.success("No duplicate rows found.")
+        with col2:
+            # disabled=... prevents clicking the button when there's nothing to do
+            if st.button("Remove Duplicates", disabled=(duplicate_count == 0)):
+                # keep='first' keeps the first occurrence, drops the rest
+                df = df.drop_duplicates(keep="first").reset_index(drop=True)
+                st.session_state.cleaned_df = df
+                st.success(f"Removed {duplicate_count} duplicate row(s).")
+                st.rerun()  # re-run the script so the UI reflects the updated data immediately
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # MISSING VALUE DETECTION & HANDLING
+        # -----------------------------------------------------------
+        st.subheader("❓ Missing Values")
+
+        null_counts = df.isnull().sum()
+        null_counts = null_counts[null_counts > 0]  # only show columns that actually have nulls
+
+        if null_counts.empty:
+            st.success("No missing values found.")
+        else:
+            st.warning(f"Found missing values in **{len(null_counts)}** column(s):")
+
+            null_summary = pd.DataFrame({
+                "Column": null_counts.index,
+                "Missing Count": null_counts.values,
+                "Missing %": (null_counts.values / len(df) * 100).round(2),
+            })
+            st.dataframe(null_summary, use_container_width=True, hide_index=True)
+
+            strategy = st.selectbox(
+                "Choose a strategy to handle missing values:",
+                options=[
+                    "Drop rows with any missing values",
+                    "Fill numeric columns with median, categorical with mode",
+                    "Fill numeric columns with mean, categorical with mode",
+                    "Fill all missing values with a constant",
+                ],
+            )
+
+            fill_constant = None
+            if strategy == "Fill all missing values with a constant":
+                fill_constant = st.text_input("Enter the constant value to use:", value="Unknown")
+
+            if st.button("Apply Missing Value Strategy"):
+                if strategy == "Drop rows with any missing values":
+                    df = df.dropna().reset_index(drop=True)
+
+                elif strategy == "Fill numeric columns with median, categorical with mode":
+                    for col in df.columns:
+                        if df[col].isnull().sum() == 0:
+                            continue
+                        if pd.api.types.is_numeric_dtype(df[col]):
+                            df[col] = df[col].fillna(df[col].median())
+                        else:
+                            # mode() can return multiple values if tied; take the first
+                            mode_val = df[col].mode(dropna=True)
+                            if not mode_val.empty:
+                                df[col] = df[col].fillna(mode_val[0])
+
+                elif strategy == "Fill numeric columns with mean, categorical with mode":
+                    for col in df.columns:
+                        if df[col].isnull().sum() == 0:
+                            continue
+                        if pd.api.types.is_numeric_dtype(df[col]):
+                            df[col] = df[col].fillna(df[col].mean())
+                        else:
+                            mode_val = df[col].mode(dropna=True)
+                            if not mode_val.empty:
+                                df[col] = df[col].fillna(mode_val[0])
+
+                elif strategy == "Fill all missing values with a constant":
+                    df = df.fillna(fill_constant)
+
+                st.session_state.cleaned_df = df
+                st.success("Missing value strategy applied.")
+                st.rerun()
+
+        st.markdown("---")
+        st.subheader("📋 Current Cleaned Data Preview")
+        st.dataframe(df.head(10), use_container_width=True)
+        st.caption(f"Current shape: {df.shape[0]} rows × {df.shape[1]} columns")
 
 else:
     # Placeholder for all remaining not-yet-built pages
