@@ -5,6 +5,9 @@ Module 1: Base application shell (title, description, sidebar, navigation)
 
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import missingno as msno
 
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
@@ -448,6 +451,94 @@ elif page == "🧹 Data Cleaning":
             file_name="cleaned_dataset.csv",
             mime="text/csv",
         )
+        st.download_button(
+            label="Download Cleaned Data as CSV",
+            data=csv_data,
+            file_name="cleaned_dataset.csv",
+            mime="text/csv",
+        )
+
+elif page == "📈 EDA":
+    st.title("📈 Exploratory Data Analysis (EDA)")
+
+    # EDA should run on the cleaned dataset if available, otherwise fall
+    # back to the raw uploaded dataset so the page still works even if
+    # the user skipped the cleaning step.
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+        st.caption("Using the cleaned dataset from the Data Cleaning step.")
+    elif st.session_state.df is not None:
+        df = st.session_state.df
+        st.caption("Using the original uploaded dataset (no cleaning applied yet).")
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_df = df.select_dtypes(include="number")
+        categorical_df = df.select_dtypes(exclude="number")
+
+        # -----------------------------------------------------------
+        # SUMMARY STATISTICS
+        # -----------------------------------------------------------
+        st.subheader("📋 Summary Statistics")
+
+        if numeric_df.empty:
+            st.info("No numeric columns available for summary statistics.")
+        else:
+            # .describe() gives count, mean, std, min, 25/50/75%, max
+            # .T transposes it so columns become rows — easier to read
+            # when there are many numeric columns.
+            st.dataframe(numeric_df.describe().T.round(2), use_container_width=True)
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # MISSING VALUE HEATMAP
+        # -----------------------------------------------------------
+        st.subheader("🕳️ Missing Value Heatmap")
+
+        if df.isnull().sum().sum() == 0:
+            st.success("No missing values in this dataset — nothing to visualize here.")
+        else:
+            # missingno.matrix draws a visual grid: white gaps = missing values,
+            # colored bars = present values. Great for spotting patterns of
+            # missingness across rows and columns at a glance.
+            fig, ax = plt.subplots(figsize=(10, 4))
+            msno.matrix(df, ax=ax, sparkline=False)
+            st.pyplot(fig)
+            plt.close(fig)  # free memory — important when generating many plots
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # CORRELATION MATRIX + HEATMAP
+        # -----------------------------------------------------------
+        st.subheader("🔗 Correlation Matrix")
+
+        if numeric_df.shape[1] < 2:
+            st.info("Need at least 2 numeric columns to compute correlations.")
+        else:
+            corr_matrix = numeric_df.corr()
+
+            fig, ax = plt.subplots(figsize=(5, 3.5))
+            # annot=True prints the actual correlation numbers inside each cell
+            # cmap="coolwarm" makes negative correlations blue, positive red
+            sns.heatmap(
+                corr_matrix, annot=True, fmt=".2f", cmap="coolwarm", center=0,
+                ax=ax, annot_kws={"size": 7}, cbar_kws={"shrink": 0.8},
+            )
+            ax.tick_params(labelsize=7)
+
+            # Wrapping in a narrower column forces Streamlit to actually
+            # respect a smaller display width, instead of stretching the
+            # image to fill the full page width.
+            heatmap_col, _ = st.columns([1, 1])
+            with heatmap_col:
+                st.pyplot(fig, use_container_width=True)
+            plt.close(fig)
+
 
 
 else:
