@@ -169,6 +169,7 @@ elif page == "📁 Upload Dataset":
 elif page == "🧹 Data Cleaning":
     st.title("🧹 Data Cleaning")
 
+
     if st.session_state.df is None:
         st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
     else:
@@ -199,7 +200,6 @@ elif page == "🧹 Data Cleaning":
                 df = df.drop_duplicates(keep="first").reset_index(drop=True)
                 st.session_state.cleaned_df = df
                 st.success(f"Removed {duplicate_count} duplicate row(s).")
-                st.rerun()  # re-run the script so the UI reflects the updated data immediately
 
         st.markdown("---")
 
@@ -269,12 +269,186 @@ elif page == "🧹 Data Cleaning":
 
                 st.session_state.cleaned_df = df
                 st.success("Missing value strategy applied.")
-                st.rerun()
+
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # OUTLIER DETECTION & TREATMENT (IQR METHOD)
+        # -----------------------------------------------------------
+        st.subheader("📉 Outlier Detection (IQR Method)")
+
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
+        if not numeric_cols:
+            st.info("No numeric columns available for outlier detection.")
+        else:
+            selected_outlier_cols = st.multiselect(
+                "Select numeric columns to check for outliers:",
+                options=numeric_cols,
+                default=numeric_cols,
+            )
+
+            outlier_summary_rows = []
+            outlier_bounds = {}
+
+            for col in selected_outlier_cols:
+                q1 = df[col].quantile(0.25)
+                q3 = df[col].quantile(0.75)
+                iqr = q3 - q1
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+
+                outlier_mask = (df[col] < lower_bound) | (df[col] > upper_bound)
+                outlier_count = int(outlier_mask.sum())
+
+                outlier_bounds[col] = (lower_bound, upper_bound)
+                outlier_summary_rows.append({
+                    "Column": col,
+                    "Outliers Found": outlier_count,
+                    "Lower Bound": round(lower_bound, 2),
+                    "Upper Bound": round(upper_bound, 2),
+                })
+
+            outlier_summary_df = pd.DataFrame(outlier_summary_rows)
+            st.dataframe(outlier_summary_df, use_container_width=True, hide_index=True)
+
+            total_outliers = outlier_summary_df["Outliers Found"].sum()
+
+            if total_outliers == 0:
+                st.success("No outliers detected in the selected columns.")
+            else:
+                treatment = st.radio(
+                    "How should outliers be treated?",
+                    options=["Cap outliers to the IQR boundary", "Remove rows containing outliers"],
+                    horizontal=True,
+                )
+
+                if st.button("Apply Outlier Treatment"):
+                    if treatment == "Cap outliers to the IQR boundary":
+                        for col, (lower_bound, upper_bound) in outlier_bounds.items():
+                            # .clip() pulls any value below lower_bound up to lower_bound,
+                            # and any value above upper_bound down to upper_bound.
+                            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+                        st.session_state.cleaned_df = df
+                        st.success("Outliers capped to IQR boundaries.")
+
+                    else:  # Remove rows containing outliers
+                        combined_mask = pd.Series(False, index=df.index)
+                        for col, (lower_bound, upper_bound) in outlier_bounds.items():
+                            combined_mask |= (df[col] < lower_bound) | (df[col] > upper_bound)
+                        df = df[~combined_mask].reset_index(drop=True)
+                        st.session_state.cleaned_df = df
+                        st.success(f"Removed {int(combined_mask.sum())} row(s) containing outliers.")
+
+                    
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # DATA TYPE CORRECTION
+        # -----------------------------------------------------------
+        st.subheader("🔧 Data Type Correction")
+        st.caption("Attempts to convert text columns that actually contain numbers into proper numeric columns.")
+
+        if st.button("Auto-Correct Numeric Columns"):
+            converted_cols = []
+            for col in df.columns:
+                if df[col].dtype == "object":
+                    # errors="coerce" turns anything unconvertible into NaN
+                    # instead of raising an exception.
+                    converted = pd.to_numeric(df[col], errors="coerce")
+                    # Only apply the conversion if MOST values converted successfully
+                    # (otherwise we'd be wrongly numeric-ifying a genuine text column).
+                    non_null_original = df[col].notna().sum()
+                    non_null_converted = converted.notna().sum()
+                    if non_null_original > 0 and (non_null_converted / non_null_original) > 0.9:
+                        df[col] = converted
+                        converted_cols.append(col)
+
+            st.session_state.cleaned_df = df
+            if converted_cols:
+                st.success(f"Converted to numeric: {', '.join(converted_cols)}")
+            else:
+                st.info("No columns needed numeric conversion.")
+            
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # DATE PARSING
+        # -----------------------------------------------------------
+        st.subheader("📅 Date Parsing")
+        st.caption("Scans column names for date-like keywords and attempts to parse them as dates.")
+
+        date_keywords = ["date", "time", "dob", "day", "month", "year"]
+        candidate_date_cols = [
+            col for col in df.columns
+            if any(keyword in col.lower() for keyword in date_keywords)
+        ]
+
+        if not candidate_date_cols:
+            st.info("No date-like column names detected.")
+        else:
+            st.write(f"Detected possible date columns: {', '.join(candidate_date_cols)}")
+            if st.button("Parse Detected Date Columns"):
+                parsed_cols = []
+                for col in candidate_date_cols:
+                    try:
+                        # errors="coerce" turns unparseable dates into NaT (Not a Time)
+                        df[col] = pd.to_datetime(df[col], errors="coerce")
+                        parsed_cols.append(col)
+                    except Exception:
+                        pass
+                st.session_state.cleaned_df = df
+                st.success(f"Parsed as dates: {', '.join(parsed_cols)}")
+               
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # COLUMN RENAMING (STANDARDIZATION)
+        # -----------------------------------------------------------
+        st.subheader("🏷️ Standardize Column Names")
+        st.caption("Converts column names to lowercase with underscores (e.g., 'Annual Income (k$)' → 'annual_income_k').")
+
+        if st.button("Standardize Column Names"):
+            new_columns = {}
+            for col in df.columns:
+                new_col = col.strip().lower()
+                new_col = new_col.replace(" ", "_")
+                # Remove any character that isn't a letter, number, or underscore
+                new_col = "".join(ch for ch in new_col if ch.isalnum() or ch == "_")
+                # Collapse multiple consecutive underscores into one
+                while "__" in new_col:
+                    new_col = new_col.replace("__", "_")
+                new_col = new_col.strip("_")
+                new_columns[col] = new_col
+
+            df = df.rename(columns=new_columns)
+            st.session_state.cleaned_df = df
+            st.success("Column names standardized.")
+            
 
         st.markdown("---")
         st.subheader("📋 Current Cleaned Data Preview")
         st.dataframe(df.head(10), use_container_width=True)
         st.caption(f"Current shape: {df.shape[0]} rows × {df.shape[1]} columns")
+
+        # -----------------------------------------------------------
+        # DOWNLOAD CLEANED DATASET
+        # -----------------------------------------------------------
+        st.markdown("---")
+        st.subheader("⬇️ Download Cleaned Dataset")
+
+        csv_data = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Download Cleaned Data as CSV",
+            data=csv_data,
+            file_name="cleaned_dataset.csv",
+            mime="text/csv",
+        )
+
 
 else:
     # Placeholder for all remaining not-yet-built pages
