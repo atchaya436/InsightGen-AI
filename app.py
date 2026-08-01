@@ -1467,6 +1467,160 @@ elif page == "✅ Recommendations":
                 for rec in priority_recs:
                     st.markdown(f"- {rec}")
 
+elif page == "📤 Reports":
+    st.title("📤 Report Generation")
+
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:
+        df = st.session_state.df
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_cols_all = df.select_dtypes(include="number").columns.tolist()
+        categorical_cols_all = df.select_dtypes(exclude="number").columns.tolist()
+
+        def is_id_like_report(col):
+            if "id" in col.lower():
+                return True
+            return df[col].nunique() / len(df) > 0.95
+
+        numeric_cols_report = [c for c in numeric_cols_all if not is_id_like_report(c)]
+
+        st.subheader("📋 Report Preview")
+        st.caption("This report combines a dataset overview, KPIs, top insights, and top recommendations.")
+
+        # -----------------------------------------------------------
+        # BUILD THE REPORT AS A MARKDOWN STRING
+        # We build it piece by piece using a list of lines, then
+        # join everything at the end — much easier to manage than
+        # one giant f-string.
+        # -----------------------------------------------------------
+        report_lines = []
+
+        report_lines.append("# InsightGen AI — Business Intelligence Report")
+        report_lines.append(f"*Generated on {pd.Timestamp.now().strftime('%B %d, %Y at %H:%M')}*")
+        report_lines.append("")
+
+        # --- Dataset Overview ---
+        report_lines.append("## Dataset Overview")
+        report_lines.append(f"- **Rows:** {df.shape[0]:,}")
+        report_lines.append(f"- **Columns:** {df.shape[1]:,}")
+        report_lines.append(f"- **Missing Values:** {int(df.isnull().sum().sum()):,}")
+        report_lines.append(f"- **Numeric Columns:** {len(numeric_cols_all)}")
+        report_lines.append(f"- **Categorical Columns:** {len(categorical_cols_all)}")
+        report_lines.append("")
+
+        # --- Key Metrics (simple universal KPIs, always safe to compute) ---
+        report_lines.append("## Key Metrics")
+        if numeric_cols_report:
+            for col in numeric_cols_report[:5]:  # cap at 5 to keep the report focused
+                report_lines.append(
+                    f"- **Average {col}:** {df[col].mean():,.2f} "
+                    f"(min: {df[col].min():,.2f}, max: {df[col].max():,.2f})"
+                )
+        else:
+            report_lines.append("- No numeric columns available for key metrics.")
+        report_lines.append("")
+
+        # --- Top Insights (condensed version of Module 7's Rule 1 & Rule 3) ---
+        report_lines.append("## Top Insights")
+        insight_count = 0
+
+        for num_col in numeric_cols_report[:2]:
+            for cat_col in categorical_cols_all[:1]:
+                grouped = df.groupby(cat_col)[num_col].mean().sort_values(ascending=False)
+                if len(grouped) >= 2:
+                    report_lines.append(
+                        f"- **{grouped.index[0]}** has the highest average {num_col} "
+                        f"({grouped.iloc[0]:,.2f}), while **{grouped.index[-1]}** has the "
+                        f"lowest ({grouped.iloc[-1]:,.2f})."
+                    )
+                    insight_count += 1
+
+        for cat_col in categorical_cols_all[:2]:
+            value_counts = df[cat_col].value_counts(normalize=True)
+            if not value_counts.empty:
+                report_lines.append(
+                    f"- **{value_counts.index[0]}** is the most common value in {cat_col}, "
+                    f"making up {value_counts.iloc[0] * 100:.1f}% of records."
+                )
+                insight_count += 1
+
+        if insight_count == 0:
+            report_lines.append("- Not enough data variety to generate insights.")
+        report_lines.append("")
+
+        # --- Top Recommendations (condensed version of Module 8's Rule 1 & Rule 2) ---
+        report_lines.append("## Top Recommendations")
+        rec_count = 0
+
+        for cat_col in categorical_cols_all[:2]:
+            value_counts = df[cat_col].value_counts(normalize=True)
+            if not value_counts.empty and value_counts.iloc[0] * 100 >= 70:
+                report_lines.append(
+                    f"- **{value_counts.index[0]}** accounts for over 70% of records in "
+                    f"{cat_col} — consider investigating this concentration."
+                )
+                rec_count += 1
+
+        for num_col in numeric_cols_report[:2]:
+            overall_mean = df[num_col].mean()
+            if overall_mean == 0:
+                continue
+            for cat_col in categorical_cols_all[:1]:
+                grouped = df.groupby(cat_col)[num_col].mean()
+                for group_name, group_mean in grouped.items():
+                    pct_below = ((overall_mean - group_mean) / abs(overall_mean)) * 100
+                    if pct_below >= 20:
+                        report_lines.append(
+                            f"- **{group_name}** shows a {pct_below:.1f}% lower average "
+                            f"{num_col} than the overall average — consider a targeted review."
+                        )
+                        rec_count += 1
+
+        if rec_count == 0:
+            report_lines.append("- No significant issues detected — the dataset looks well-balanced.")
+        report_lines.append("")
+
+        report_lines.append("---")
+        report_lines.append("*Report generated by InsightGen AI — Automated Business Intelligence Platform*")
+
+        report_markdown = "\n".join(report_lines)
+
+        # -----------------------------------------------------------
+        # DISPLAY PREVIEW + DOWNLOAD
+        # -----------------------------------------------------------
+        with st.expander("Preview full report", expanded=True):
+            st.markdown(report_markdown)
+
+        st.markdown("---")
+        st.subheader("⬇️ Download Reports")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.download_button(
+                label="📄 Download Full Report (Markdown)",
+                data=report_markdown.encode("utf-8"),
+                file_name="insightgen_report.md",
+                mime="text/markdown",
+                key="download_report_md_button",
+            )
+
+        with col2:
+            csv_data_report = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📊 Download Cleaned Dataset (CSV)",
+                data=csv_data_report,
+                file_name="cleaned_dataset.csv",
+                mime="text/csv",
+                key="download_cleaned_csv_report_page",
+            )
+
 else:
     # Placeholder for all remaining not-yet-built pages
     st.title(page)
