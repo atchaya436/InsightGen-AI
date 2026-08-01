@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import missingno as msno
 import plotly.express as px
+from fpdf import FPDF
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
 # Must be the FIRST Streamlit command in the script.
@@ -1592,6 +1593,55 @@ elif page == "📤 Reports":
         report_markdown = "\n".join(report_lines)
 
         # -----------------------------------------------------------
+        # PDF GENERATION
+        # Converts the same report_lines content into a PDF using
+        # fpdf2. We detect simple Markdown patterns (headings starting
+        # with #, bullets starting with -) and format them accordingly
+        # rather than doing a full Markdown parser.
+        # -----------------------------------------------------------
+        def generate_pdf(lines):
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+
+            for line in lines:
+                # Strip markdown bold markers (**) since fpdf doesn't
+                # render markdown — we handle bold via font weight instead.
+                clean_line = line.replace("**", "")
+
+                pdf.set_x(pdf.l_margin)
+                
+                if line.startswith("# "):
+                    pdf.set_font("Helvetica", "B", 18)
+                    pdf.multi_cell(0, 10, clean_line[2:].encode("latin-1", "replace").decode("latin-1"))
+                    pdf.ln(2)
+                elif line.startswith("## "):
+                    pdf.set_font("Helvetica", "B", 14)
+                    pdf.multi_cell(0, 8, clean_line[3:].encode("latin-1", "replace").decode("latin-1"))
+                    pdf.ln(1)
+                elif line.startswith("*") and line.endswith("*") and not line.startswith("- "):
+                    pdf.set_font("Helvetica", "I", 10)
+                    pdf.multi_cell(0, 6, clean_line.strip("*").encode("latin-1", "replace").decode("latin-1"))
+                elif line.startswith("- "):
+                    pdf.set_font("Helvetica", "", 11)
+                    # encode/decode strips characters fpdf's base fonts can't render
+                    # (e.g. emoji), replacing them safely instead of crashing.
+                    bullet_text = clean_line[2:].encode("latin-1", "replace").decode("latin-1")
+                    pdf.multi_cell(0, 6, f"-  {bullet_text}")
+                elif line.startswith("---"):
+                    pdf.ln(2)
+                elif line.strip() == "":
+                    pdf.ln(3)
+                else:
+                    pdf.set_font("Helvetica", "", 11)
+                    pdf.multi_cell(0, 6, clean_line.encode("latin-1", "replace").decode("latin-1"))
+
+            # fpdf2's output() returns a bytearray; convert to bytes for Streamlit
+            return bytes(pdf.output())
+
+        pdf_bytes = generate_pdf(report_lines)
+
+        # -----------------------------------------------------------
         # DISPLAY PREVIEW + DOWNLOAD
         # -----------------------------------------------------------
         with st.expander("Preview full report", expanded=True):
@@ -1600,7 +1650,7 @@ elif page == "📤 Reports":
         st.markdown("---")
         st.subheader("⬇️ Download Reports")
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
             st.download_button(
@@ -1612,6 +1662,15 @@ elif page == "📤 Reports":
             )
 
         with col2:
+            st.download_button(
+                label="📕 Download Full Report (PDF)",
+                data=pdf_bytes,
+                file_name="insightgen_report.pdf",
+                mime="application/pdf",
+                key="download_report_pdf_button",
+            )
+
+        with col3:
             csv_data_report = df.to_csv(index=False).encode("utf-8")
             st.download_button(
                 label="📊 Download Cleaned Dataset (CSV)",
