@@ -10,6 +10,9 @@ import seaborn as sns
 import missingno as msno
 import plotly.express as px
 from fpdf import FPDF
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.ensemble import IsolationForest
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
 # Must be the FIRST Streamlit command in the script.
@@ -43,6 +46,7 @@ page = st.sidebar.radio(
         "📊 Dashboard",
         "💡 Insights",
         "✅ Recommendations",
+        "🧬 ML Insights",
         "📤 Reports",
     ],
 )
@@ -1610,7 +1614,7 @@ elif page == "📤 Reports":
                 clean_line = line.replace("**", "")
 
                 pdf.set_x(pdf.l_margin)
-                
+
                 if line.startswith("# "):
                     pdf.set_font("Helvetica", "B", 18)
                     pdf.multi_cell(0, 10, clean_line[2:].encode("latin-1", "replace").decode("latin-1"))
@@ -1679,6 +1683,205 @@ elif page == "📤 Reports":
                 mime="text/csv",
                 key="download_cleaned_csv_report_page",
             )
+
+elif page == "🧬 ML Insights":
+    st.title("🧬 ML Insights")
+    st.caption("Machine learning features: customer segmentation and anomaly detection.")
+
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:   
+        df = st.session_state.df
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_cols_ml = df.select_dtypes(include="number").columns.tolist()
+
+        def is_id_like_ml(col):
+            if "id" in col.lower():
+                return True
+            return df[col].nunique() / len(df) > 0.95
+
+        numeric_cols_ml = [c for c in numeric_cols_ml if not is_id_like_ml(c)]
+
+        ml_tab = st.radio(
+            "Choose an ML feature:",
+            options=["🎯 Customer Segmentation (KMeans)", "🚨 Anomaly Detection"],
+            horizontal=True,
+        )
+
+        st.markdown("---")
+
+        # =============================================================
+        # KMEANS CUSTOMER SEGMENTATION
+        # =============================================================
+        if ml_tab == "🎯 Customer Segmentation (KMeans)":
+            st.subheader("🎯 Customer Segmentation (KMeans Clustering)")
+
+            if len(numeric_cols_ml) < 2:
+                st.info("Need at least 2 non-ID numeric columns to run clustering.")
+            else:
+                selected_features = st.multiselect(
+                    "Select numeric columns to cluster on:",
+                    options=numeric_cols_ml,
+                    default=numeric_cols_ml[:2],
+                )
+
+                if len(selected_features) < 2:
+                    st.warning("Please select at least 2 columns.")
+                else:
+                    # Drop rows with missing values in the selected features —
+                    # KMeans cannot handle NaN values.
+                    cluster_data = df[selected_features].dropna()
+
+                    # -----------------------------------------------
+                    # FEATURE SCALING
+                    # KMeans is distance-based, so columns with larger
+                    # numeric ranges (e.g., Income 15-137) would unfairly
+                    # dominate columns with smaller ranges (e.g., Age 18-70)
+                    # unless we standardize everything to the same scale.
+                    # -----------------------------------------------
+                    scaler = StandardScaler()
+                    scaled_data = scaler.fit_transform(cluster_data)
+
+                    # -----------------------------------------------
+                    # ELBOW METHOD
+                    # Runs KMeans for k=2 through k=10 and records the
+                    # "inertia" (sum of squared distances to the nearest
+                    # centroid) for each. The "elbow" point — where adding
+                    # more clusters stops giving much improvement — is a
+                    # good candidate for the ideal number of clusters.
+                    # -----------------------------------------------
+                    st.markdown("##### 📐 Elbow Method — Choosing the Number of Clusters")
+
+                    inertias = []
+                    k_range = range(2, 11)
+                    for k in k_range:
+                        km = KMeans(n_clusters=k, random_state=42, n_init=10)
+                        km.fit(scaled_data)
+                        inertias.append(km.inertia_)
+
+                    elbow_fig = px.line(
+                        x=list(k_range), y=inertias, markers=True,
+                        labels={"x": "Number of Clusters (k)", "y": "Inertia"},
+                        title="Elbow Method",
+                    )
+                    st.plotly_chart(elbow_fig, use_container_width=True)
+                    st.caption(
+                        "Look for the point where the curve starts to flatten (the 'elbow') — "
+                        "that's usually a good choice for the number of clusters."
+                    )
+
+                    # -----------------------------------------------
+                    # RUN KMEANS WITH USER-CHOSEN K
+                    # -----------------------------------------------
+                    n_clusters = st.slider("Number of clusters (k):", min_value=2, max_value=10, value=5)
+
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    cluster_labels = kmeans.fit_predict(scaled_data)
+
+                    # Attach cluster labels back to a copy of the original
+                    # (unscaled) data, so we can interpret clusters in
+                    # real-world units, not standardized values.
+                    clustered_df = cluster_data.copy()
+                    clustered_df["Cluster"] = cluster_labels.astype(str)
+
+                    st.markdown("##### 🔵 Cluster Visualization")
+
+                    if len(selected_features) >= 2:
+                        fig_cluster = px.scatter(
+                            clustered_df, x=selected_features[0], y=selected_features[1],
+                            color="Cluster",
+                            title=f"Clusters: {selected_features[0]} vs {selected_features[1]}",
+                        )
+                        st.plotly_chart(fig_cluster, use_container_width=True)
+
+                    st.markdown("##### 📋 Cluster Profiles (Average Values)")
+                    cluster_profile = clustered_df.groupby("Cluster")[selected_features].mean().round(2)
+                    cluster_profile["Count"] = clustered_df.groupby("Cluster").size()
+                    st.dataframe(cluster_profile, use_container_width=True)
+                    st.caption(
+                        "Each row shows the average feature values for that cluster — "
+                        "use this to give each segment a meaningful business name."
+                    )
+
+        # =============================================================
+        # ANOMALY DETECTION (ISOLATION FOREST)
+        # =============================================================
+        elif ml_tab == "🚨 Anomaly Detection":
+            st.subheader("🚨 Anomaly Detection (Isolation Forest)")
+
+            if len(numeric_cols_ml) < 1:
+                st.info("Need at least 1 non-ID numeric column to run anomaly detection.")
+            else:
+                anomaly_features = st.multiselect(
+                    "Select numeric columns to check for anomalies:",
+                    options=numeric_cols_ml,
+                    default=numeric_cols_ml,
+                )
+
+                if not anomaly_features:
+                    st.warning("Please select at least 1 column.")
+                else:
+                    anomaly_data = df[anomaly_features].dropna()
+
+                    contamination = st.slider(
+                        "Expected proportion of anomalies:",
+                        min_value=0.01, max_value=0.20, value=0.05, step=0.01,
+                        help="Roughly what fraction of rows you expect to be unusual. "
+                             "5% is a reasonable starting point.",
+                    )
+
+                    # Isolation Forest isolates anomalies via random partitioning —
+                    # points that get separated from the rest in fewer random
+                    # splits are flagged as anomalies. Unlike IQR (Module 3),
+                    # this considers ALL selected columns together, catching
+                    # unusual COMBINATIONS of values, not just single-column outliers.
+                    iso_forest = IsolationForest(
+                        contamination=contamination, random_state=42
+                    )
+                    # predict() returns -1 for anomalies, 1 for normal points
+                    predictions = iso_forest.fit_predict(anomaly_data)
+
+                    result_df = anomaly_data.copy()
+                    result_df["Status"] = ["Anomaly" if p == -1 else "Normal" for p in predictions]
+
+                    anomaly_count = (result_df["Status"] == "Anomaly").sum()
+
+                    st.markdown("---")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total Rows Analyzed", f"{len(result_df):,}")
+                    with col2:
+                        st.metric("Anomalies Detected", f"{anomaly_count:,}")
+
+                    st.markdown("##### 🔵 Anomaly Visualization")
+
+                    if len(anomaly_features) >= 2:
+                        fig_anomaly = px.scatter(
+                            result_df, x=anomaly_features[0], y=anomaly_features[1],
+                            color="Status",
+                            color_discrete_map={"Normal": "#4C72B0", "Anomaly": "#DD3333"},
+                            title=f"Anomalies: {anomaly_features[0]} vs {anomaly_features[1]}",
+                        )
+                        st.plotly_chart(fig_anomaly, use_container_width=True)
+                    else:
+                        fig_anomaly = px.strip(
+                            result_df, x=anomaly_features[0], color="Status",
+                            color_discrete_map={"Normal": "#4C72B0", "Anomaly": "#DD3333"},
+                            title=f"Anomalies in {anomaly_features[0]}",
+                        )
+                        st.plotly_chart(fig_anomaly, use_container_width=True)
+
+                    st.markdown("##### 📋 Flagged Anomaly Rows")
+                    anomaly_rows = result_df[result_df["Status"] == "Anomaly"]
+                    if anomaly_rows.empty:
+                        st.success("No anomalies detected with the current settings.")
+                    else:
+                        st.dataframe(anomaly_rows, use_container_width=True)
 
 else:
     # Placeholder for all remaining not-yet-built pages
