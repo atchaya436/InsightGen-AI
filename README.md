@@ -39,6 +39,56 @@ All insight and recommendation logic is **100% rule-based statistical analysis**
 - **Version Control:** Git & GitHub
 
 ---
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    A[User Browser] --> B[Streamlit UI Layer]
+    B --> C[Session State<br/>df / cleaned_df]
+    C --> D[Data Cleaning Module]
+    C --> E[EDA Module]
+    C --> F[KPI Generator]
+    C --> G[Dashboard]
+    C --> H[Insight Generator]
+    C --> I[Recommendation Engine]
+    C --> J[ML Insights<br/>KMeans / Isolation Forest]
+    D --> C
+    E --> K[Matplotlib / Seaborn / missingno]
+    G --> L[Plotly]
+    F --> M[Rule-Based Detection Logic]
+    H --> M
+    I --> M
+    J --> N[scikit-learn]
+    C --> O[Report Generator]
+    O --> P[Markdown / PDF / CSV Export]
+
+    style B fill:#4C72B0,color:#fff
+    style C fill:#DD8452,color:#fff
+    style M fill:#55A868,color:#fff
+```
+
+*All processing modules read from and write back to a shared session state, so data flows consistently through the pipeline regardless of navigation order.*
+
+## 🔄 User Workflow
+
+```mermaid
+graph LR
+    A[1. Upload<br/>Dataset] --> B[2. Clean<br/>Data]
+    B --> C[3. Explore<br/>EDA]
+    C --> D[4. View<br/>KPIs]
+    D --> E[5. Explore<br/>Dashboard]
+    E --> F[6. Read<br/>Insights]
+    F --> G[7. Review<br/>Recommendations]
+    G --> H[8. Optional:<br/>ML Insights]
+    H --> I[9. Export<br/>Report]
+
+    style A fill:#4C72B0,color:#fff
+    style I fill:#55A868,color:#fff
+```
+
+*Each step is optional and independently accessible via the sidebar — the app doesn't force a rigid sequence, but this is the typical analysis flow.*
+
+---
 
 ## 📂 Project Structure
 InsightGen-AI/
