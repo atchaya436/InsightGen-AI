@@ -822,6 +822,104 @@ elif page == "📌 KPIs":
                 st.markdown(f"##### Top {category_col} by Count")
                 st.bar_chart(df[category_col].value_counts().head(10))
 
+        elif detected_type == "HR":
+            salary_col = find_column(df, ["salary"])
+            department_col = find_column(df, ["department"])
+            attrition_col = find_column(df, ["attrition", "status"])
+            tenure_col = find_column(df, ["tenure", "years"])
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Employees", f"{df.shape[0]:,}")
+            with col2:
+                if salary_col:
+                    st.metric("Average Salary", f"{df[salary_col].mean():,.2f}")
+                else:
+                    st.metric("Average Salary", "N/A")
+            with col3:
+                if attrition_col:
+                    # Look for common "left the company" indicators:
+                    # Yes/No, True/False, or Terminated/Active style values.
+                    left_values = ["yes", "true", "terminated", "resigned", "left"]
+                    attrition_mask = df[attrition_col].astype(str).str.lower().isin(left_values)
+                    attrition_rate = (attrition_mask.sum() / len(df)) * 100
+                    st.metric("Attrition Rate", f"{attrition_rate:.1f}%")
+                else:
+                    st.metric("Attrition Rate", "N/A")
+            with col4:
+                if tenure_col:
+                    st.metric("Average Tenure", f"{df[tenure_col].mean():.1f} yrs")
+                else:
+                    st.metric("Average Tenure", "N/A")
+
+            if department_col:
+                st.markdown(f"##### Employees by {department_col}")
+                st.bar_chart(df[department_col].value_counts())
+
+        elif detected_type == "Finance":
+            revenue_col = find_column(df, ["revenue", "sales", "income"])
+            expense_col = find_column(df, ["expense", "cost"])
+            profit_col = find_column(df, ["profit"])
+
+            total_revenue = df[revenue_col].sum() if revenue_col else None
+            total_expense = df[expense_col].sum() if expense_col else None
+
+            # Prefer an explicit profit column if it exists; otherwise
+            # derive it as revenue minus expenses.
+            if profit_col:
+                total_profit = df[profit_col].sum()
+            elif total_revenue is not None and total_expense is not None:
+                total_profit = total_revenue - total_expense
+            else:
+                total_profit = None
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                if total_revenue is not None:
+                    st.metric("Total Revenue", f"{total_revenue:,.2f}")
+                else:
+                    st.metric("Total Revenue", "N/A")
+            with col2:
+                if total_expense is not None:
+                    st.metric("Total Expenses", f"{total_expense:,.2f}")
+                else:
+                    st.metric("Total Expenses", "N/A")
+            with col3:
+                if total_profit is not None:
+                    st.metric("Net Profit", f"{total_profit:,.2f}")
+                else:
+                    st.metric("Net Profit", "N/A")
+            with col4:
+                if total_profit is not None and total_revenue not in (None, 0):
+                    profit_margin = (total_profit / total_revenue) * 100
+                    st.metric("Profit Margin", f"{profit_margin:.1f}%")
+                else:
+                    st.metric("Profit Margin", "N/A")
+
+        else:  # detected_type == "Generic"
+            st.caption(
+                "This dataset didn't clearly match a specific business category, "
+                "so here are general-purpose statistics instead."
+            )
+
+            numeric_cols_kpi = df.select_dtypes(include="number").columns.tolist()
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Rows", f"{df.shape[0]:,}")
+            with col2:
+                st.metric("Total Columns", f"{df.shape[1]:,}")
+            with col3:
+                st.metric("Numeric Columns", f"{len(numeric_cols_kpi):,}")
+            with col4:
+                total_nulls = int(df.isnull().sum().sum())
+                st.metric("Total Missing Values", f"{total_nulls:,}")
+
+            if numeric_cols_kpi:
+                st.markdown("##### Average Values (Numeric Columns)")
+                averages = df[numeric_cols_kpi].mean().round(2)
+                st.bar_chart(averages)
+
 else:
     # Placeholder for all remaining not-yet-built pages
     st.title(page)
