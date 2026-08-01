@@ -8,7 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import missingno as msno
-
+import plotly.express as px
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
 # Must be the FIRST Streamlit command in the script.
@@ -919,6 +919,124 @@ elif page == "📌 KPIs":
                 st.markdown("##### Average Values (Numeric Columns)")
                 averages = df[numeric_cols_kpi].mean().round(2)
                 st.bar_chart(averages)
+
+elif page == "📊 Dashboard":
+    st.title("📊 Interactive Dashboard")
+
+    if st.session_state.cleaned_df is not None:
+        base_df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:
+        base_df = st.session_state.df
+    else:
+        base_df = None
+
+    if base_df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_cols = base_df.select_dtypes(include="number").columns.tolist()
+        categorical_cols = base_df.select_dtypes(exclude="number").columns.tolist()
+
+        # -----------------------------------------------------------
+        # FILTERS
+        # Applied once, at the top, then reused by every chart below —
+        # this is what makes the whole dashboard feel "connected."
+        # -----------------------------------------------------------
+        st.subheader("🔍 Filters")
+
+        filtered_df = base_df.copy()
+
+        if categorical_cols:
+            filter_col = st.selectbox(
+                "Filter by column (optional):",
+                options=["None"] + categorical_cols,
+            )
+
+            if filter_col != "None":
+                unique_values = base_df[filter_col].dropna().unique().tolist()
+                selected_values = st.multiselect(
+                    f"Select {filter_col} value(s) to include:",
+                    options=unique_values,
+                    default=unique_values,  # start with everything selected
+                )
+                # Only rows whose value is in the selected list survive the filter
+                filtered_df = filtered_df[filtered_df[filter_col].isin(selected_values)]
+
+        st.caption(f"Showing {filtered_df.shape[0]:,} of {base_df.shape[0]:,} rows after filtering.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # BAR CHART
+        # -----------------------------------------------------------
+        st.subheader("📊 Bar Chart")
+
+        if categorical_cols and numeric_cols:
+            bar_col1, bar_col2 = st.columns(2)
+            with bar_col1:
+                bar_x = st.selectbox("X-axis (category):", options=categorical_cols, key="bar_x")
+            with bar_col2:
+                bar_y = st.selectbox("Y-axis (numeric):", options=numeric_cols, key="bar_y")
+
+            # Aggregate: sum of the numeric column, grouped by the category
+            bar_data = filtered_df.groupby(bar_x, as_index=False)[bar_y].sum()
+
+            fig_bar = px.bar(
+                bar_data, x=bar_x, y=bar_y,
+                title=f"Total {bar_y} by {bar_x}",
+                color=bar_x,
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("Need at least one categorical and one numeric column for a bar chart.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # LINE CHART
+        # -----------------------------------------------------------
+        st.subheader("📈 Line Chart")
+
+        if numeric_cols:
+            line_col1, line_col2 = st.columns(2)
+            with line_col1:
+                # Allow using either a numeric or datetime column as the x-axis
+                line_x_options = filtered_df.columns.tolist()
+                line_x = st.selectbox("X-axis:", options=line_x_options, key="line_x")
+            with line_col2:
+                line_y = st.selectbox("Y-axis (numeric):", options=numeric_cols, key="line_y")
+
+            # Sort by the x-axis so the line draws in a sensible order
+            # (important if x is a date or sequential ID column)
+            line_data = filtered_df.sort_values(by=line_x)
+
+            fig_line = px.line(
+                line_data, x=line_x, y=line_y,
+                title=f"{line_y} over {line_x}",
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("Need at least one numeric column for a line chart.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # PIE CHART
+        # -----------------------------------------------------------
+        st.subheader("🥧 Pie Chart")
+
+        if categorical_cols:
+            pie_col = st.selectbox("Column to break down:", options=categorical_cols, key="pie_col")
+
+            pie_data = filtered_df[pie_col].value_counts().reset_index()
+            pie_data.columns = [pie_col, "count"]
+
+            fig_pie = px.pie(
+                pie_data, names=pie_col, values="count",
+                title=f"Distribution of {pie_col}",
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("Need at least one categorical column for a pie chart.")
 
 else:
     # Placeholder for all remaining not-yet-built pages
