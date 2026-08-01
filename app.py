@@ -1135,6 +1135,163 @@ elif page == "📊 Dashboard":
         else:
             st.info("Need at least one numeric column for a histogram.")
 
+elif page == "💡 Insights":
+    st.title("💡 Business Insight Generator")
+    st.caption("All insights below are generated using rule-based statistical logic — no AI/LLM involved.")
+
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:
+        df = st.session_state.df
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
+
+        # -----------------------------------------------------------
+        # EXCLUDE ID-LIKE COLUMNS
+        # A column where nearly every value is unique (e.g., CustomerID)
+        # is almost certainly an identifier, not a meaningful measure —
+        # including it in insights produces statistically "true" but
+        # business-meaningless statements (e.g., "highest CustomerID").
+        # We exclude any numeric column where >95% of values are unique,
+        # and also any column whose name literally contains "id".
+        # -----------------------------------------------------------
+        def is_id_like(col):
+            if "id" in col.lower():
+                return True
+            uniqueness_ratio = df[col].nunique() / len(df)
+            return uniqueness_ratio > 0.95
+
+        numeric_cols = [col for col in numeric_cols if not is_id_like(col)]
+
+        def esc(text):
+            """Escape '$' so Streamlit markdown doesn't treat it as LaTeX math."""
+            return str(text).replace("$", "\\$")
+
+        insights = []  # collects (insight_text) strings to display at the end
+
+        # -----------------------------------------------------------
+        # RULE 1: TOP / BOTTOM PERFORMER BY CATEGORY
+        # For each numeric column, grouped by each categorical column,
+        # find which category has the highest and lowest average.
+        # -----------------------------------------------------------
+        for num_col in numeric_cols[:3]:      # limit to first 3 numeric cols to avoid an overwhelming report
+            for cat_col in categorical_cols[:2]:  # limit to first 2 categorical cols
+                grouped = df.groupby(cat_col)[num_col].mean().sort_values(ascending=False)
+                if len(grouped) < 2:
+                    continue  # need at least 2 groups to compare
+
+                top_group, top_value = grouped.index[0], grouped.iloc[0]
+                bottom_group, bottom_value = grouped.index[-1], grouped.iloc[-1]
+
+                insights.append(
+                    f"📌 **{esc(top_group)}** has the highest average **{esc(num_col)}** "
+                    f"({top_value:,.2f}) when grouped by **{esc(cat_col)}**, while "
+                    f"**{esc(bottom_group)}** has the lowest ({bottom_value:,.2f})."
+                )
+
+        # -----------------------------------------------------------
+        # RULE 2: EXTREME INDIVIDUAL VALUES
+        # Finds the single row with the highest/lowest value in a
+        # numeric column — useful for flagging standout records.
+        # -----------------------------------------------------------
+        for num_col in numeric_cols[:3]:
+            max_idx = df[num_col].idxmax()
+            min_idx = df[num_col].idxmin()
+
+            max_val = df.loc[max_idx, num_col]
+            min_val = df.loc[min_idx, num_col]
+
+            insights.append(
+                f"📈 The highest recorded **{esc(num_col)}** is **{max_val:,.2f}** "
+                f"(row {max_idx}), and the lowest is **{min_val:,.2f}** (row {min_idx})."
+            )
+
+        # -----------------------------------------------------------
+        # RULE 3: CATEGORICAL DOMINANCE
+        # Finds which category makes up the largest share of the
+        # dataset for each categorical column.
+        # -----------------------------------------------------------
+        for cat_col in categorical_cols[:3]:
+            value_counts = df[cat_col].value_counts(normalize=True)
+            if value_counts.empty:
+                continue
+
+            top_category = value_counts.index[0]
+            top_share = value_counts.iloc[0] * 100
+
+            insights.append(
+                f"🗂️ **{esc(top_category)}** is the most common value in **{esc(cat_col)}**, "
+                f"making up **{top_share:.1f}%** of all records."
+            )
+
+        # -----------------------------------------------------------
+        # RULE 4: CORRELATION-BASED INSIGHTS
+        # Reuses the same |r| >= 0.5 threshold logic from Module 4,
+        # phrased as a business-relevant relationship.
+        # -----------------------------------------------------------
+        if len(numeric_cols) >= 2:
+            corr_matrix = df[numeric_cols].corr()
+            reported_pairs = set()
+
+            for col_a in corr_matrix.columns:
+                for col_b in corr_matrix.columns:
+                    if col_a == col_b:
+                        continue
+                    pair_key = frozenset([col_a, col_b])
+                    if pair_key in reported_pairs:
+                        continue
+
+                    corr_value = corr_matrix.loc[col_a, col_b]
+                    if abs(corr_value) >= 0.5:
+                        reported_pairs.add(pair_key)
+                        relation = "rises" if corr_value > 0 else "falls"
+                        insights.append(
+                            f"🔗 When **{esc(col_a)}** increases, **{esc(col_b)}** typically "
+                            f"**{relation}** (correlation: {corr_value:.2f})."
+                        )
+
+        # -----------------------------------------------------------
+        # RULE 5: GROUP COMPARISON (ABOVE/BELOW MEDIAN)
+        # Splits one numeric column into "above" and "below" median
+        # groups, then compares the average of another numeric column
+        # between the two groups.
+        # -----------------------------------------------------------
+        if len(numeric_cols) >= 2:
+            split_col = numeric_cols[0]
+            compare_col = numeric_cols[1]
+
+            median_val = df[split_col].median()
+            above_group = df[df[split_col] > median_val][compare_col].mean()
+            below_group = df[df[split_col] <= median_val][compare_col].mean()
+
+            if pd.notna(above_group) and pd.notna(below_group) and below_group != 0:
+                pct_diff = ((above_group - below_group) / abs(below_group)) * 100
+                direction = "higher" if pct_diff > 0 else "lower"
+
+                insights.append(
+                    f"⚖️ Records with **{esc(split_col)}** above the median tend to have "
+                    f"**{abs(pct_diff):.1f}% {direction}** average **{esc(compare_col)}** "
+                    f"compared to those below the median."
+                )
+
+        # -----------------------------------------------------------
+        # DISPLAY ALL INSIGHTS
+        # -----------------------------------------------------------
+        st.markdown("---")
+        st.subheader(f"📋 Generated Insights ({len(insights)} found)")
+
+        if not insights:
+            st.info("Not enough data variety to generate insights for this dataset.")
+        else:
+            for insight in insights:
+                st.markdown(f"- {insight}")
+
 else:
     # Placeholder for all remaining not-yet-built pages
     st.title(page)
