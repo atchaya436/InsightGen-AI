@@ -314,36 +314,39 @@ elif page == "🧹 Data Cleaning":
                 })
 
             outlier_summary_df = pd.DataFrame(outlier_summary_rows)
-            st.dataframe(outlier_summary_df, use_container_width=True, hide_index=True)
 
-            total_outliers = outlier_summary_df["Outliers Found"].sum()
-
-            if total_outliers == 0:
-                st.success("No outliers detected in the selected columns.")
+            if outlier_summary_df.empty:
+                st.info("Select at least one column above to check for outliers.")
             else:
-                treatment = st.radio(
-                    "How should outliers be treated?",
-                    options=["Cap outliers to the IQR boundary", "Remove rows containing outliers"],
-                    horizontal=True,
-                )
+                st.dataframe(outlier_summary_df, use_container_width=True, hide_index=True)
 
-                if st.button("Apply Outlier Treatment"):
-                    if treatment == "Cap outliers to the IQR boundary":
-                        for col, (lower_bound, upper_bound) in outlier_bounds.items():
-                            # .clip() pulls any value below lower_bound up to lower_bound,
-                            # and any value above upper_bound down to upper_bound.
-                            df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
-                        st.session_state.cleaned_df = df
-                        st.success("Outliers capped to IQR boundaries.")
+                total_outliers = outlier_summary_df["Outliers Found"].sum()
 
-                    else:  # Remove rows containing outliers
-                        combined_mask = pd.Series(False, index=df.index)
-                        for col, (lower_bound, upper_bound) in outlier_bounds.items():
-                            combined_mask |= (df[col] < lower_bound) | (df[col] > upper_bound)
-                        df = df[~combined_mask].reset_index(drop=True)
-                        st.session_state.cleaned_df = df
-                        st.success(f"Removed {int(combined_mask.sum())} row(s) containing outliers.")
+                if total_outliers == 0:
+                    st.success("No outliers detected in the selected columns.")
+                else:
+                    treatment = st.radio(
+                        "How should outliers be treated?",
+                        options=["Cap outliers to the IQR boundary", "Remove rows containing outliers"],
+                        horizontal=True,
+                    )
 
+                    if st.button("Apply Outlier Treatment"):
+                        if treatment == "Cap outliers to the IQR boundary":
+                            for col, (lower_bound, upper_bound) in outlier_bounds.items():
+                                # .clip() pulls any value below lower_bound up to lower_bound,
+                                # and any value above upper_bound down to upper_bound.
+                                df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+                            st.session_state.cleaned_df = df
+                            st.success("Outliers capped to IQR boundaries.")
+
+                        else:  # Remove rows containing outliers
+                            combined_mask = pd.Series(False, index=df.index)
+                            for col, (lower_bound, upper_bound) in outlier_bounds.items():
+                                combined_mask |= (df[col] < lower_bound) | (df[col] > upper_bound)
+                            df = df[~combined_mask].reset_index(drop=True)
+                            st.session_state.cleaned_df = df
+                            st.success(f"Removed {int(combined_mask.sum())} row(s) containing outliers.")
                     
 
         st.markdown("---")
@@ -450,13 +453,9 @@ elif page == "🧹 Data Cleaning":
             data=csv_data,
             file_name="cleaned_dataset.csv",
             mime="text/csv",
+            key="download_cleaned_csv_button",
         )
-        st.download_button(
-            label="Download Cleaned Data as CSV",
-            data=csv_data,
-            file_name="cleaned_dataset.csv",
-            mime="text/csv",
-        )
+        
 
 elif page == "📈 EDA":
     st.title("📈 Exploratory Data Analysis (EDA)")
@@ -1291,6 +1290,182 @@ elif page == "💡 Insights":
         else:
             for insight in insights:
                 st.markdown(f"- {insight}")
+
+elif page == "✅ Recommendations":
+    st.title("✅ Recommendation Engine")
+    st.caption("Recommendations are generated using rule-based thresholds — no AI/LLM involved.")
+
+    if st.session_state.cleaned_df is not None:
+        df = st.session_state.cleaned_df
+    elif st.session_state.df is not None:
+        df = st.session_state.df
+    else:
+        df = None
+
+    if df is None:
+        st.info("👆 Please upload a dataset first on the **Upload Dataset** page.")
+    else:
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        categorical_cols = df.select_dtypes(exclude="number").columns.tolist()
+
+        def esc(text):
+            """Escape '$' so Streamlit markdown doesn't treat it as LaTeX math."""
+            return str(text).replace("$", "\\$")
+
+        def is_id_like(col):
+            if "id" in col.lower():
+                return True
+            return df[col].nunique() / len(df) > 0.95
+
+        numeric_cols = [col for col in numeric_cols if not is_id_like(col)]
+
+        recommendations = []  # list of (priority, text) tuples
+
+        # -----------------------------------------------------------
+        # RULE 1: CATEGORY IMBALANCE
+        # If one category makes up a very large share of the dataset,
+        # that concentration itself is worth flagging as a risk or
+        # an opportunity to diversify.
+        # -----------------------------------------------------------
+        IMBALANCE_THRESHOLD = 70  # percent
+
+        for cat_col in categorical_cols[:3]:
+            value_counts = df[cat_col].value_counts(normalize=True)
+            if value_counts.empty:
+                continue
+
+            top_category = value_counts.index[0]
+            top_share = value_counts.iloc[0] * 100
+
+            if top_share >= IMBALANCE_THRESHOLD:
+                recommendations.append((
+                    "High",
+                    f"⚠️ **{esc(top_category)}** accounts for **{top_share:.1f}%** of all records in "
+                    f"**{esc(cat_col)}**. Consider investigating whether this concentration is expected, "
+                    f"or whether diversifying **{esc(cat_col)}** could reduce dependency risk."
+                ))
+
+        # -----------------------------------------------------------
+        # RULE 2: UNDERPERFORMING GROUPS
+        # If a group's average is significantly below the overall
+        # average for a numeric measure, flag it as needing attention.
+        # -----------------------------------------------------------
+        UNDERPERFORM_THRESHOLD = 20  # percent below overall average
+
+        for num_col in numeric_cols[:3]:
+            overall_mean = df[num_col].mean()
+            if overall_mean == 0:
+                continue
+
+            for cat_col in categorical_cols[:2]:
+                grouped = df.groupby(cat_col)[num_col].mean()
+
+                for group_name, group_mean in grouped.items():
+                    pct_below = ((overall_mean - group_mean) / abs(overall_mean)) * 100
+
+                    if pct_below >= UNDERPERFORM_THRESHOLD:
+                        recommendations.append((
+                            "High",
+                            f"📉 **{esc(group_name)}** shows a **{pct_below:.1f}% lower** average "
+                            f"**{esc(num_col)}** than the overall average, when grouped by **{esc(cat_col)}**. "
+                            f"Consider a targeted review or improvement plan for this segment."
+                        ))
+
+        # -----------------------------------------------------------
+        # RULE 3: HIGH VARIABILITY (COEFFICIENT OF VARIATION)
+        # CV = std / mean. A high CV means the values are very
+        # inconsistent relative to their average — worth investigating.
+        # -----------------------------------------------------------
+        CV_THRESHOLD = 0.5  # 50% relative variability
+
+        for num_col in numeric_cols[:3]:
+            mean_val = df[num_col].mean()
+            std_val = df[num_col].std()
+
+            if mean_val == 0 or pd.isna(std_val):
+                continue
+
+            cv = std_val / abs(mean_val)
+
+            if cv >= CV_THRESHOLD:
+                recommendations.append((
+                    "Medium",
+                    f"📊 **{esc(num_col)}** shows high variability relative to its average "
+                    f"(coefficient of variation: {cv:.2f}). Consider investigating the cause of this "
+                    f"inconsistency — it may indicate inconsistent processes or distinct sub-groups worth separating."
+                ))
+
+        # -----------------------------------------------------------
+        # RULE 4: STRONG CORRELATIONS — LEVERAGE OR MONITOR
+        # -----------------------------------------------------------
+        CORR_THRESHOLD = 0.7  # "strong" correlation
+
+        if len(numeric_cols) >= 2:
+            corr_matrix = df[numeric_cols].corr()
+            reported_pairs = set()
+
+            for col_a in corr_matrix.columns:
+                for col_b in corr_matrix.columns:
+                    if col_a == col_b:
+                        continue
+                    pair_key = frozenset([col_a, col_b])
+                    if pair_key in reported_pairs:
+                        continue
+
+                    corr_value = corr_matrix.loc[col_a, col_b]
+                    if abs(corr_value) >= CORR_THRESHOLD:
+                        reported_pairs.add(pair_key)
+                        recommendations.append((
+                            "Medium",
+                            f"🔗 **{esc(col_a)}** and **{esc(col_b)}** are strongly correlated "
+                            f"({corr_value:.2f}). Consider using **{esc(col_a)}** as an early indicator "
+                            f"for **{esc(col_b)}**, or monitor both together in future reporting."
+                        ))
+
+        # -----------------------------------------------------------
+        # RULE 5: DATA QUALITY REMINDER
+        # Compares the ORIGINAL uploaded dataset to the CLEANED one
+        # to remind the user what issues were present and handled.
+        # -----------------------------------------------------------
+        if st.session_state.df is not None and st.session_state.cleaned_df is not None:
+            original_df = st.session_state.df
+            original_duplicates = int(original_df.duplicated().sum())
+            original_nulls = int(original_df.isnull().sum().sum())
+
+            if original_duplicates > 0 or original_nulls > 0:
+                issue_parts = []
+                if original_duplicates > 0:
+                    issue_parts.append(f"{original_duplicates} duplicate row(s)")
+                if original_nulls > 0:
+                    issue_parts.append(f"{original_nulls} missing value(s)")
+
+                recommendations.append((
+                    "Low",
+                    f"🧹 The original dataset contained {', and '.join(issue_parts)}, which have been "
+                    f"addressed in the Data Cleaning step. Consider investigating the **source** of this "
+                    f"data to prevent similar issues in future uploads."
+                ))
+
+        # -----------------------------------------------------------
+        # DISPLAY RECOMMENDATIONS, GROUPED BY PRIORITY
+        # -----------------------------------------------------------
+        st.markdown("---")
+        st.subheader(f"📋 Generated Recommendations ({len(recommendations)} found)")
+
+        if not recommendations:
+            st.success("No significant issues or opportunities detected — the dataset looks well-balanced.")
+        else:
+            priority_order = ["High", "Medium", "Low"]
+            priority_colors = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}
+
+            for priority in priority_order:
+                priority_recs = [text for p, text in recommendations if p == priority]
+                if not priority_recs:
+                    continue
+
+                st.markdown(f"##### {priority_colors[priority]} {priority} Priority")
+                for rec in priority_recs:
+                    st.markdown(f"- {rec}")
 
 else:
     # Placeholder for all remaining not-yet-built pages
