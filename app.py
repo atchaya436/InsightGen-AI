@@ -2,7 +2,7 @@
 InsightGen AI: Automated Business Intelligence & Decision Support Platform
 Module 1: Base application shell (title, description, sidebar, navigation)
 """
-
+import streamlit as st
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,6 +13,37 @@ from fpdf import FPDF
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
+import logging
+import os
+
+# -----------------------------------------------------------------------
+# LOGGING SETUP
+# Writes timestamped events to a log file instead of just printing to
+# a terminal that disappears when closed. This is essential for
+# debugging issues that happen during real usage, after the fact.
+# -----------------------------------------------------------------------
+os.makedirs("logs", exist_ok=True)  # create the logs/ folder if it doesn't exist yet
+
+logging.basicConfig(
+    filename="logs/app.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+# -----------------------------------------------------------------------
+# LOGGING SETUP
+# Writes timestamped events to a log file instead of just printing to
+# a terminal that disappears when closed. This is essential for
+# debugging issues that happen during real usage, after the fact.
+# -----------------------------------------------------------------------
+os.makedirs("logs", exist_ok=True)  # create the logs/ folder if it doesn't exist yet
+
+logging.basicConfig(
+    filename="logs/app.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 # PAGE CONFIGURATION
 # Must be the FIRST Streamlit command in the script.
@@ -103,31 +134,79 @@ elif page == "📁 Upload Dataset":
 
     # file_uploader returns None until the user actually uploads something.
     # type=[...] restricts which file extensions are selectable/droppable.
+    MAX_FILE_SIZE_MB = 50
+
     uploaded_file = st.file_uploader(
         "Choose a file",
         type=["csv", "xlsx", "xls"],
     )
 
     if uploaded_file is not None:
-        try:
-            # Read based on file extension.
-            # uploaded_file.name gives us the original filename with extension.
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
+        # -----------------------------------------------------------
+        # VALIDATION 1: FILE SIZE
+        # Check this BEFORE attempting to read the file at all —
+        # no point trying to parse something we're going to reject.
+        # -----------------------------------------------------------
+        file_size_mb = uploaded_file.size / (1024 * 1024)
 
-            # Store in session_state so other modules (cleaning, EDA, etc.)
-            # can access this same dataframe without re-uploading.
-            st.session_state.df = df
-            st.session_state.filename = uploaded_file.name
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            st.error(
+                f"❌ File is too large ({file_size_mb:.1f} MB). "
+                f"Maximum allowed size is {MAX_FILE_SIZE_MB} MB."
+            )
+            logger.warning(f"Rejected oversized file: {uploaded_file.name} ({file_size_mb:.1f} MB)")
 
-            st.success(f"✅ Successfully loaded **{uploaded_file.name}**")
+        # -----------------------------------------------------------
+        # VALIDATION 2: EMPTY FILE
+        # -----------------------------------------------------------
+        elif uploaded_file.size == 0:
+            st.error("❌ The uploaded file is empty (0 bytes). Please choose a different file.")
+            logger.warning(f"Rejected empty file: {uploaded_file.name}")
 
-        except Exception as e:
-            # Catch any read errors (corrupt file, wrong format, etc.)
-            # instead of letting the app crash with a raw traceback.
-            st.error(f"❌ Error reading file: {e}")
+        else:
+            try:
+                # Read based on file extension.
+                if uploaded_file.name.endswith(".csv"):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    df = pd.read_excel(uploaded_file)
+
+                # -----------------------------------------------
+                # VALIDATION 3: EMPTY DATASET (0 rows or 0 columns)
+                # A file can be technically valid CSV/Excel format
+                # but contain no actual data (e.g., just headers,
+                # or a completely blank sheet).
+                # -----------------------------------------------
+                if df.shape[0] == 0:
+                    st.error("❌ The file was read successfully but contains no data rows.")
+                    logger.warning(f"Rejected file with 0 rows: {uploaded_file.name}")
+                elif df.shape[1] == 0:
+                    st.error("❌ The file was read successfully but contains no columns.")
+                    logger.warning(f"Rejected file with 0 columns: {uploaded_file.name}")
+
+                # -----------------------------------------------
+                # VALIDATION 4: ENTIRELY EMPTY (ALL-NULL) DATASET
+                # -----------------------------------------------
+                elif df.isnull().all().all():
+                    st.error("❌ Every value in this file is missing/blank. Please check the source file.")
+                    logger.warning(f"Rejected all-null file: {uploaded_file.name}")
+
+                else:
+                    # All validation checks passed — proceed as normal.
+                    st.session_state.df = df
+                    st.session_state.filename = uploaded_file.name
+
+                    st.success(f"✅ Successfully loaded **{uploaded_file.name}**")
+                    logger.info(
+                        f"File uploaded successfully: {uploaded_file.name} "
+                        f"({df.shape[0]} rows, {df.shape[1]} cols)"
+                    )
+
+            except Exception as e:
+                # Catch any read errors (corrupt file, wrong format, etc.)
+                # instead of letting the app crash with a raw traceback.
+                st.error(f"❌ Error reading file: {e}")
+                logger.error(f"File upload failed for {uploaded_file.name}: {e}")
 
     # Only show preview + metadata if a dataframe currently exists in session_state
     if st.session_state.df is not None:
@@ -208,6 +287,7 @@ elif page == "🧹 Data Cleaning":
                 df = df.drop_duplicates(keep="first").reset_index(drop=True)
                 st.session_state.cleaned_df = df
                 st.success(f"Removed {duplicate_count} duplicate row(s).")
+                logger.info(f"Removed {duplicate_count} duplicate rows. New shape: {df.shape}")
 
         st.markdown("---")
 
