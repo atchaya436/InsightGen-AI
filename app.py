@@ -1038,6 +1038,103 @@ elif page == "📊 Dashboard":
         else:
             st.info("Need at least one categorical column for a pie chart.")
 
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # SCATTER CHART
+        # -----------------------------------------------------------
+        st.subheader("🔵 Scatter Chart")
+
+        if len(numeric_cols) >= 2:
+            scatter_col1, scatter_col2, scatter_col3 = st.columns(3)
+            with scatter_col1:
+                scatter_x = st.selectbox("X-axis:", options=numeric_cols, key="scatter_x")
+            with scatter_col2:
+                scatter_y = st.selectbox(
+                    "Y-axis:", options=numeric_cols,
+                    index=min(1, len(numeric_cols) - 1),  # default to 2nd numeric col if available
+                    key="scatter_y",
+                )
+            with scatter_col3:
+                color_options = ["None"] + categorical_cols
+                scatter_color = st.selectbox("Color by (optional):", options=color_options, key="scatter_color")
+
+            fig_scatter = px.scatter(
+                filtered_df, x=scatter_x, y=scatter_y,
+                color=None if scatter_color == "None" else scatter_color,
+                title=f"{scatter_y} vs {scatter_x}",
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Need at least two numeric columns for a scatter chart.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # INTERACTIVE HEATMAP
+        # -----------------------------------------------------------
+        st.subheader("🌡️ Correlation Heatmap")
+
+        if len(numeric_cols) >= 2:
+            corr_data = filtered_df[numeric_cols].corr()
+
+            fig_heatmap = px.imshow(
+                corr_data,
+                text_auto=".2f",  # show correlation values inside each cell
+                color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1,  # fix the color scale to the full correlation range
+                title="Correlation Heatmap",
+            )
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+        else:
+            st.info("Need at least two numeric columns for a heatmap.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # BOXPLOT (OPTIONALLY GROUPED)
+        # -----------------------------------------------------------
+        st.subheader("📦 Boxplot")
+
+        if numeric_cols:
+            box_col1, box_col2 = st.columns(2)
+            with box_col1:
+                box_y = st.selectbox("Numeric column:", options=numeric_cols, key="dash_box_y")
+            with box_col2:
+                box_group_options = ["None"] + categorical_cols
+                box_group = st.selectbox("Group by (optional):", options=box_group_options, key="dash_box_group")
+
+            fig_box = px.box(
+                filtered_df, y=box_y,
+                x=None if box_group == "None" else box_group,
+                title=f"Boxplot of {box_y}" + (f" by {box_group}" if box_group != "None" else ""),
+            )
+            st.plotly_chart(fig_box, use_container_width=True)
+        else:
+            st.info("Need at least one numeric column for a boxplot.")
+
+        st.markdown("---")
+
+        # -----------------------------------------------------------
+        # HISTOGRAM (WITH ADJUSTABLE BINS)
+        # -----------------------------------------------------------
+        st.subheader("📊 Histogram")
+
+        if numeric_cols:
+            hist_col1, hist_col2 = st.columns(2)
+            with hist_col1:
+                dash_hist_col = st.selectbox("Column:", options=numeric_cols, key="dash_hist_col")
+            with hist_col2:
+                bin_count = st.slider("Number of bins:", min_value=5, max_value=100, value=30)
+
+            fig_hist = px.histogram(
+                filtered_df, x=dash_hist_col, nbins=bin_count,
+                title=f"Histogram of {dash_hist_col}",
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+        else:
+            st.info("Need at least one numeric column for a histogram.")
+
 else:
     # Placeholder for all remaining not-yet-built pages
     st.title(page)
